@@ -89,28 +89,26 @@
     if (level >= MAX_LEVEL) return node;
 
     let numChildren;
-    if (level === 0) numChildren = 3;            // root → 3 (matches logo)
+    if (level === 0) numChildren = 2;            // root → 2 (calm opening, leaves room to grow)
     else if (level === MAX_LEVEL - 1) numChildren = 0;  // last layer: leaves only
     else {
       const r = rng();
       if (level === 1) {
-        // Level 1: usually 2, sometimes 1 or 3 — keeps the top of the tree calm
-        if (r < 0.18) numChildren = 1;
-        else if (r < 0.78) numChildren = 2;
+        // Level 1: usually 2, sometimes 1 or 3
+        if (r < 0.20) numChildren = 1;
+        else if (r < 0.80) numChildren = 2;
         else numChildren = 3;
       } else if (level === 2) {
-        // Level 2: emphasis on 2 and 3, occasional 1
-        if (r < 0.12) numChildren = 1;
-        else if (r < 0.55) numChildren = 2;
-        else if (r < 0.90) numChildren = 3;
-        else numChildren = 4;
+        // Level 2: bias toward 2, some 1s, occasional 3
+        if (r < 0.20) numChildren = 1;
+        else if (r < 0.70) numChildren = 2;
+        else numChildren = 3;
       } else {
-        // Level 3+: full mix, including some leaves so the tree feels organic
-        if (r < 0.15) numChildren = 0;
-        else if (r < 0.30) numChildren = 1;
-        else if (r < 0.65) numChildren = 2;
-        else if (r < 0.90) numChildren = 3;
-        else numChildren = 4;
+        // Level 3+: full mix including some leaves and 3-children (BM candidates)
+        if (r < 0.20) numChildren = 0;
+        else if (r < 0.35) numChildren = 1;
+        else if (r < 0.70) numChildren = 2;
+        else numChildren = 3;
       }
     }
 
@@ -127,16 +125,34 @@
     if (node.children.length === 3 && node.children.every(c => c.children.length === 0)) return true;
     return node.children.some(hasBrandMarkSubtree);
   }
+  // Aim for ~12–16 leaves so the full tree sits comfortably in a 16:9 frame
+  // (5 levels of Y_GAP=110 → ~550 vertical, multiplied by 16/9 → ~975 horizontal,
+  // divided by X_GAP=87.5 → ~11 leaves before padding). A bit of overshoot is
+  // fine since the camera adds padding and expands height to fit aspect.
   let tree, treeStats;
-  for (let seed = 7; seed < 200; seed++) {
+  for (let seed = 1; seed < 400; seed++) {
     nextId = 0;
     const candidate = makeNode(0, mulberry32(seed));
     const stats = countTree(candidate);
-    if (stats.leaves >= 24 && stats.total <= 160 && stats.maxDepth >= MAX_LEVEL - 1
+    if (stats.leaves >= 11 && stats.leaves <= 18 && stats.maxDepth >= MAX_LEVEL - 1
         && hasBrandMarkSubtree(candidate)) {
       tree = candidate;
       treeStats = stats;
       break;
+    }
+  }
+  if (!tree) {
+    // Loosen criteria as a fallback
+    for (let seed = 1; seed < 400; seed++) {
+      nextId = 0;
+      const candidate = makeNode(0, mulberry32(seed));
+      const stats = countTree(candidate);
+      if (stats.leaves >= 9 && stats.leaves <= 22
+          && hasBrandMarkSubtree(candidate)) {
+        tree = candidate;
+        treeStats = stats;
+        break;
+      }
     }
   }
   if (!tree) {
