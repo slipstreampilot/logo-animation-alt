@@ -437,6 +437,42 @@
     wordmarkEls = { dt, rs };
   }
 
+  // ─── Signal-wave pulse ─────────────────────────────────────────
+  // During the CHOSEN phase, a bright pulse travels along the chosen path from
+  // root to leaf, leaving the green color behind. Two layered circles: a soft
+  // green halo (Gaussian-blurred) for the glow, and a bright cream-white core
+  // for the focused signal point. Position is computed from each chosen edge's
+  // SVG path via getPointAtLength so the wave follows the actual L-shaped geometry.
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  defs.innerHTML = `
+    <filter id="signal-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  `;
+  canvas.appendChild(defs);
+
+  const waveHalo = document.createElementNS(SVG_NS, 'circle');
+  waveHalo.setAttribute('r', '14');
+  waveHalo.setAttribute('fill', GREEN);
+  waveHalo.setAttribute('opacity', '0');
+  waveHalo.setAttribute('filter', 'url(#signal-glow)');
+  canvas.appendChild(waveHalo);
+
+  const waveCore = document.createElementNS(SVG_NS, 'circle');
+  waveCore.setAttribute('r', '4.5');
+  waveCore.setAttribute('fill', '#FFF6E2');
+  waveCore.setAttribute('opacity', '0');
+  canvas.appendChild(waveCore);
+
+  // Map chosen-path index → SVG element for the edge from chosenPath[i] to chosenPath[i+1].
+  const chosenEdgeByPathIdx = new Map();
+  edgeEls.forEach(({ el, edge }) => {
+    if (!edge.chosen) return;
+    const pIdx = chosenPath.findIndex(n => n.id === edge.parent.id);
+    const cIdx = chosenPath.findIndex(n => n.id === edge.child.id);
+    if (pIdx >= 0 && cIdx === pIdx + 1) chosenEdgeByPathIdx.set(pIdx, el);
+  });
+
   // Then nodes (on top of edges)
   // Sort: non-chosen first, chosen on top
   allNodes.sort((a, b) => (a.chosen ? 1 : 0) - (b.chosen ? 1 : 0));
@@ -638,6 +674,68 @@
       const a = String(master * wordmarkAlpha);
       wordmarkEls.dt.setAttribute('opacity', a);
       wordmarkEls.rs.setAttribute('opacity', a);
+    }
+
+    // Signal-wave pulse along chosen path.
+    // Only visible during CHOSEN phase; positioned along chosen edges via
+    // getPointAtLength so it follows the L-shape correctly. Path is split into
+    // N "slots" where N = chosenPath.length: slot 0 emits at the root, slots
+    // 1..N-1 traverse edges 0..N-2 from parent to child.
+    {
+      // Wave uses LINEAR progress through the CHOSEN window so it moves at
+      // constant speed, regardless of the color sweep's eased curve. This makes
+      // it feel like a steady signal pulse traveling the wire.
+      const ch = PHASE.CHOSEN;
+      const waveProg = (t - ch.start) / (ch.end - ch.start);
+      let visible = false;
+      if (waveProg > 0 && waveProg < 1) {
+        const N = chosenPath.length;
+        const sweepIdx = waveProg * N;
+        const idx = Math.min(Math.floor(sweepIdx), N - 1);
+        const localProg = clamp(sweepIdx - idx, 0, 1);
+
+        let wx, wy;
+        if (idx === 0) {
+          // First slot: pulse emerges at the root center.
+          wx = chosenPath[0].x;
+          wy = chosenPath[0].y;
+        } else {
+          const edgeEl = chosenEdgeByPathIdx.get(idx - 1);
+          if (edgeEl) {
+            const len = edgeEl.getTotalLength();
+            const pt = edgeEl.getPointAtLength(localProg * len);
+            wx = pt.x;
+            wy = pt.y;
+          }
+        }
+
+        if (typeof wx === 'number' && isFinite(wx)) {
+          // Smooth fade-in at start so the pulse doesn't pop into existence.
+          // Hold full intensity all the way to the leaf — arrival is marked by
+          // the leaf filling green, not by the wave dimming.
+          let waveAlpha = 1;
+          if (waveProg < 0.06) waveAlpha = waveProg / 0.06;
+          // Brief halo expansion at arrival — gives a "flash on landing" feel.
+          let haloR = 14;
+          if (waveProg > 0.92) {
+            const arrival = (waveProg - 0.92) / 0.08; // 0..1 over last 8%
+            haloR = 14 + arrival * 8; // 14 → 22
+          }
+
+          waveCore.setAttribute('cx', wx);
+          waveCore.setAttribute('cy', wy);
+          waveCore.setAttribute('opacity', String(master * waveAlpha));
+          waveHalo.setAttribute('cx', wx);
+          waveHalo.setAttribute('cy', wy);
+          waveHalo.setAttribute('r', String(haloR));
+          waveHalo.setAttribute('opacity', String(master * waveAlpha * 0.85));
+          visible = true;
+        }
+      }
+      if (!visible) {
+        waveCore.setAttribute('opacity', '0');
+        waveHalo.setAttribute('opacity', '0');
+      }
     }
 
     // Edges
