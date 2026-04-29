@@ -78,9 +78,9 @@
   }
 
   // ─── 1. Generate the tree ──────────────────────────────────────
-  // Branching factors mix 1, 2, 3, and 4 children per node so the tree shows
-  // decisions with one option, two options, three options. The deepest content
-  // level is MAX_LEVEL-1 (forced to 0 children → those nodes are leaves).
+  // Branching factors are {0, 2, 3} — every internal node is a real decision
+  // with at least two options, or a terminal leaf. (Single-child "decisions"
+  // don't exist in real ML trees and read as obviously fake.)
   const MAX_LEVEL = 5; // up to 6 levels including root
   let nextId = 0;
 
@@ -94,19 +94,17 @@
     else {
       const r = rng();
       if (level === 1) {
-        // Level 1: usually 2, sometimes 1 or 3
-        if (r < 0.20) numChildren = 1;
-        else if (r < 0.80) numChildren = 2;
+        // Level 1: always branches (2 or 3) — too shallow to terminate
+        if (r < 0.65) numChildren = 2;
         else numChildren = 3;
       } else if (level === 2) {
-        // Level 2: bias toward 2, some 1s, occasional 3
-        if (r < 0.20) numChildren = 1;
+        // Level 2: mostly 2, some 3, rare early terminations
+        if (r < 0.10) numChildren = 0;
         else if (r < 0.70) numChildren = 2;
         else numChildren = 3;
       } else {
-        // Level 3+: full mix including some leaves and 3-children (BM candidates)
-        if (r < 0.20) numChildren = 0;
-        else if (r < 0.35) numChildren = 1;
+        // Level 3+: leaves, 2, or 3 (3-child nodes are BM candidates)
+        if (r < 0.30) numChildren = 0;
         else if (r < 0.70) numChildren = 2;
         else numChildren = 3;
       }
@@ -495,22 +493,25 @@
   // ZOOM_IN tightens the camera onto the brand-mark subtree (parent + 3 children
   // with rightmost filled), reverts the parent's stroke from green to cream so
   // the held composition reads as the brand mark icon. Then loop.
+  // Build is L1..L5 (5 phases for tree depth 4 — root + 4 deeper levels).
+  // Camera moves continuously across the entire build via easeOutCubic; per-level
+  // child reveals are gated on the parent's edge finishing first ("planting" the
+  // circle) and staggered left-to-right within each level for an organic wave.
   const PHASE = {
-    L1:        { start:    0, end:  600 },   // root
-    L2:        { start:  600, end: 1300 },   // 3 children
-    L3:        { start: 1300, end: 2200 },   // 6 grandchildren
-    L4:        { start: 2200, end: 3300 },
-    L5:        { start: 3300, end: 4600 },
-    L6:        { start: 4600, end: 6000 },
-    HOLD:      { start: 6000, end: 6700 },
-    CHOSEN:    { start: 6700, end: 8400 },   // green sweeps root → leaf
-    ZOOM_IN:   { start: 8400, end: 10100 },  // camera tightens to brand-mark subtree
-    HOLD_BM:   { start: 10100, end: 10900 }, // hold the icon alone (0.8s)
-    WORDMARK:  { start: 10900, end: 12300 }, // DECISION TREE / RESEARCH text fades in (1.4s)
-    HOLD_FULL: { start: 12300, end: 14600 }, // hold full logo: icon + wordmark (2.3s)
-    DISSOLVE:  { start: 14600, end: 15800 },
+    L1:        { start:    0, end:  300 },   // root only — no incoming edge
+    L2:        { start:  300, end:  650 },   // level 1
+    L3:        { start:  650, end: 1100 },   // level 2
+    L4:        { start: 1100, end: 1650 },   // level 3
+    L5:        { start: 1650, end: 2300 },   // level 4 / leaves
+    HOLD:      { start: 2300, end: 2350 },   // near-zero gap before chosen sweep
+    CHOSEN:    { start: 2350, end: 3200 },   // signal wave + green sweep (850ms)
+    ZOOM_IN:   { start: 3200, end: 4050 },   // camera tightens to brand-mark (850ms)
+    HOLD_BM:   { start: 4050, end: 4450 },   // hold icon alone (400ms)
+    WORDMARK:  { start: 4450, end: 5150 },   // text fades in (700ms)
+    HOLD_FULL: { start: 5150, end: 6300 },   // full logo held (1150ms)
+    DISSOLVE:  { start: 6300, end: 6900 },   // (600ms)
   };
-  const TOTAL = 15800;
+  const TOTAL = 6900;
 
   // Wordmark fades in during WORDMARK phase, then sits at full opacity through
   // HOLD_FULL. DISSOLVE is handled by master alpha multiplication at render.
@@ -524,19 +525,63 @@
   function nodePhase(level) {
     return PHASE[`L${level + 1}`];
   }
-  // Nodes appear in the LATER portion of their phase — the camera leads them.
-  // This way the viewport is already wide enough for the children before they sprout.
-  const NODE_REVEAL_DELAY = 0.40;  // 0..1 — what fraction into the phase before nodes start appearing
-  function nodeBuildT(node, t) {
+
+  // Per-level x bounds for left-to-right stagger within each level.
+  const levelXBounds = new Map();
+  // Compute on the fly the first time used (allNodes is built later, in section 5).
+  function getLevelBounds(level) {
+    let b = levelXBounds.get(level);
+    if (b) return b;
+    b = { min: Infinity, max: -Infinity };
+    function visit(n) {
+      if (n.level === level) {
+        b.min = Math.min(b.min, n.x);
+        b.max = Math.max(b.max, n.x);
+      }
+      n.children.forEach(visit);
+    }
+    visit(tree);
+    levelXBounds.set(level, b);
+    return b;
+  }
+  function levelXFrac(node) {
+    const b = getLevelBounds(node.level);
+    const span = b.max - b.min;
+    return span > 0 ? (node.x - b.min) / span : 0;
+  }
+
+  // Within each phase L_(level+1), each (edge, child) pair gets its own slot:
+  //   1. Stagger by x-position (leftmost first → rightmost last over STAGGER_DUR)
+  //   2. Edge draws over EDGE_FRACTION of the slot
+  //   3. Child circle pops in over the remaining time — the line "plants" it
+  // Root (level 0) has no incoming edge, so it appears across its full phase.
+  const STAGGER_DUR = 90;     // ms — max delay between leftmost and rightmost in a level
+  const EDGE_FRACTION = 0.72; // edge takes this fraction of the per-node slot
+  function nodeSlot(node) {
     const ph = nodePhase(node.level);
-    const adjustedStart = ph.start + (ph.end - ph.start) * NODE_REVEAL_DELAY;
-    if (t <= adjustedStart) return 0;
-    if (t >= ph.end) return 1;
-    return easeOutQuart((t - adjustedStart) / (ph.end - adjustedStart));
+    const dur = ph.end - ph.start;
+    if (node.level === 0) {
+      // Root reveals across the entire L1 phase, no edge gating
+      return { edgeStart: ph.start, edgeEnd: ph.start, nodeStart: ph.start, nodeEnd: ph.end };
+    }
+    const xFrac = levelXFrac(node);
+    const edgeStart = ph.start + xFrac * STAGGER_DUR;
+    const slotDur = dur - STAGGER_DUR;  // remaining time after stagger
+    const edgeEnd = edgeStart + slotDur * EDGE_FRACTION;
+    const nodeEnd = edgeStart + slotDur;
+    return { edgeStart, edgeEnd, nodeStart: edgeEnd, nodeEnd };
+  }
+  function nodeBuildT(node, t) {
+    const slot = nodeSlot(node);
+    if (t <= slot.nodeStart) return 0;
+    if (t >= slot.nodeEnd) return 1;
+    return easeOutQuart((t - slot.nodeStart) / (slot.nodeEnd - slot.nodeStart));
   }
   function edgeBuildT(edge, t) {
-    // Edges appear with their child node
-    return nodeBuildT(edge.child, t);
+    const slot = nodeSlot(edge.child);
+    if (t <= slot.edgeStart) return 0;
+    if (t >= slot.edgeEnd) return 1;
+    return easeOutQuart((t - slot.edgeStart) / (slot.edgeEnd - slot.edgeStart));
   }
 
   // Sequential green traversal along the chosen path during CHOSEN phase
@@ -608,34 +653,31 @@
     return 1;
   }
 
-  // ViewBox steps through one VB per level reveal. The camera ZOOMS QUICKLY at
-  // the start of each phase (front-loaded easing) so the viewport is already
-  // wide enough by the time the new children sprout in (they sprout later in
-  // the phase per NODE_REVEAL_DELAY above). This avoids the awful moment where
-  // a long horizontal connector stretches off-screen toward an as-yet-unseen child.
-  const CAMERA_ZOOM_FRACTION = 0.55;  // camera zoom completes in first 55% of phase
+  // Camera moves continuously across the entire build phase (no stops between
+  // levels) using easeOutCubic on a single 0→TREE_DEPTH parameter. Front-loaded
+  // so the camera leads the children's appearance even though the easing
+  // smoothly decelerates toward the end.
   function interpVB(a, b, t) {
     return {
       x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t),
       w: lerp(a.w, b.w, t), h: lerp(a.h, b.h, t),
     };
   }
+  const TREE_DEPTH = treeStats.maxDepth;          // typically 4
+  const BUILD_END = PHASE.L5.end;                 // = 2300
+  function cameraLevel(t) {
+    if (t <= 0) return 0;
+    if (t >= BUILD_END) return TREE_DEPTH;
+    return easeOutCubic(t / BUILD_END) * TREE_DEPTH;
+  }
   function getViewBox(t) {
-    // L1 phase: only the root scaling in — keep camera tight on root
-    if (t < PHASE.L1.end) return VBs[0];
-
-    // L2..L6: each phase transitions VB from previous level to current level
-    for (let k = 2; k <= 6; k++) {
-      const phase = PHASE[`L${k}`];
-      if (t >= phase.start && t < phase.end) {
-        const zoomEnd = phase.start + (phase.end - phase.start) * CAMERA_ZOOM_FRACTION;
-        const progress = clamp((t - phase.start) / (zoomEnd - phase.start), 0, 1);
-        const eased = easeOutCubic(progress);
-        return interpVB(VBs[k - 2], VBs[k - 1], eased);
-      }
+    if (t < BUILD_END) {
+      const lvl = cameraLevel(t);
+      const lo = Math.min(Math.floor(lvl), MAX_LEVEL - 1);
+      const hi = Math.min(lo + 1, MAX_LEVEL);
+      return interpVB(VBs[lo], VBs[hi], lvl - lo);
     }
-    // After build: full tree, then zoom in to brand mark, then hold (BM,
-    // WORDMARK, HOLD_FULL, DISSOLVE all sit on the brand-mark viewBox).
+    // After build: hold full-tree view through HOLD/CHOSEN, then zoom to BM.
     if (t < PHASE.ZOOM_IN.start) return VBs[MAX_LEVEL];
     if (t < PHASE.ZOOM_IN.end) {
       const z = PHASE.ZOOM_IN;
@@ -782,10 +824,13 @@
         const ct = chosenNodeT(node, t);
         stroke = lerpColor(CREAM_RGB, GREEN_RGB, ct);
         if (node.id === BM_PARENT_ID) {
-          // Brand-mark parent reverts green → cream during zoom-in (it plays the
-          // role of the static logo's cream root).
-          stroke = lerpColor(GREEN_RGB, CREAM_RGB, bmReveal);
-          strokeWidth = STROKE + (1 - bmReveal) * 1.5;
+          // BM_PARENT: cream until the wave arrives (ct ramps 0→1), then green,
+          // then reverts to cream during zoom-in (since it plays the role of
+          // the static logo's cream root). Greenness peaks while ct=1 and
+          // bmReveal=0; at bmReveal=1 it returns to cream.
+          const greenness = ct * (1 - bmReveal);
+          stroke = lerpColor(CREAM_RGB, GREEN_RGB, greenness);
+          strokeWidth = STROKE + greenness * 1.5;
         } else if (!partOfBM) {
           // Chosen ancestor ABOVE P: fade out during zoom-in.
           strokeWidth = STROKE + ct * 1.5;
