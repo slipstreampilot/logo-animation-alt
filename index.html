@@ -301,6 +301,13 @@
 
   const VBs = [];
   for (let l = 0; l <= MAX_LEVEL; l++) VBs.push(computeViewBoxThroughLevel(l));
+  // Beyond the tree's actual depth, computeViewBoxThroughLevel keeps growing
+  // the padding (PAD = 80 + maxLevel * 25) even though no new nodes exist —
+  // so VBs[TREE_DEPTH+1..] are phantom-bigger than VBs[TREE_DEPTH]. Collapse
+  // them to VBs[TREE_DEPTH] so the camera doesn't jerk outward at the build →
+  // HOLD boundary or at the start of ZOOM_IN.
+  const TREE_DEPTH = treeStats.maxDepth;
+  for (let l = TREE_DEPTH + 1; l <= MAX_LEVEL; l++) VBs[l] = VBs[TREE_DEPTH];
   const FINAL_VB = VBs[MAX_LEVEL];
 
   // ─── Brand-mark viewBox: PIXEL-PERFECT match to static logo ────
@@ -663,8 +670,7 @@
       w: lerp(a.w, b.w, t), h: lerp(a.h, b.h, t),
     };
   }
-  const TREE_DEPTH = treeStats.maxDepth;          // typically 4
-  const BUILD_END = PHASE.L5.end;                 // = 2300
+  const BUILD_END = PHASE.L5.end;                 // = 2300; TREE_DEPTH defined above with VBs
   function cameraLevel(t) {
     if (t <= 0) return 0;
     if (t >= BUILD_END) return TREE_DEPTH;
