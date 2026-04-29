@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision Tree Research — Cascading Complexity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #072420; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    min-height: 100vh;
+    font-family: 'Futura-Medium', 'Futura', 'Jost', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stage {
+    width: min(98vw, 1600px);
+    aspect-ratio: 16 / 9;
+  }
+  svg { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage">
+    <svg id="canvas" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+</div>
+
+<script>
+(() => {
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const canvas = document.getElementById('canvas');
+
+  const CREAM = '#ddcaab';
+  const GREEN = '#67c070';
+  const NODE_R = 15;
+  const STROKE = 5;
+  const HALF_STROKE = STROKE / 2;
+
+  // ─── Helpers ────────────────────────────────────────────────────
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeInOut = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4);
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+  function hexToRgb(h) {
+    h = h.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  const CREAM_RGB = hexToRgb(CREAM);
+  const GREEN_RGB = hexToRgb(GREEN);
+  function lerpColor(a, b, t) {
+    return `rgb(${Math.round(lerp(a[0], b[0], t))},${Math.round(lerp(a[1], b[1], t))},${Math.round(lerp(a[2], b[2], t))})`;
+  }
+
+  // Seeded PRNG (deterministic so the loop is identical each time)
+  function mulberry32(seed) {
+    let a = seed | 0;
+    return () => {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  // ─── 1. Generate the tree ──────────────────────────────────────
+  // Branching factors mix 1, 2, 3, and 4 children per node so the tree shows
+  // decisions with one option, two options, three options. The deepest content
+  // level is MAX_LEVEL-1 (forced to 0 children → those nodes are leaves).
+  const MAX_LEVEL = 5; // up to 6 levels including root
+  let nextId = 0;
+
+  function makeNode(level, rng) {
+    const node = { id: nextId++, level, children: [], chosen: false };
+    if (level >= MAX_LEVEL) return node;
+
+    let numChildren;
+    if (level === 0) numChildren = 3;            // root → 3 (matches logo)
+    else if (level === MAX_LEVEL - 1) numChildren = 0;  // last layer: leaves only
+    else {
+      const r = rng();
+      if (level === 1) {
+        // Level 1: usually 2, sometimes 1 or 3 — keeps the top of the tree calm
+        if (r < 0.18) numChildren = 1;
+        else if (r < 0.78) numChildren = 2;
+        else numChildren = 3;
+      } else if (level === 2) {
+        // Level 2: emphasis on 2 and 3, occasional 1
+        if (r < 0.12) numChildren = 1;
+        else if (r < 0.55) numChildren = 2;
+        else if (r < 0.90) numChildren = 3;
+        else numChildren = 4;
+      } else {
+        // Level 3+: full mix, including some leaves so the tree feels organic
+        if (r < 0.15) numChildren = 0;
+        else if (r < 0.30) numChildren = 1;
+        else if (r < 0.65) numChildren = 2;
+        else if (r < 0.90) numChildren = 3;
+        else numChildren = 4;
+      }
+    }
+
+    for (let i = 0; i < numChildren; i++) {
+      node.children.push(makeNode(level + 1, rng));
+    }
+    return node;
+  }
+
+  // Pick a seed that gives a good shape: enough leaves, a level-3 node with
+  // exactly 3 leaf children (so the brand-mark composition is naturally
+  // present in the tree), and a manageable total node count.
+  function hasBrandMarkSubtree(node) {
+    if (node.children.length === 3 && node.children.every(c => c.children.length === 0)) return true;
+    return node.children.some(hasBrandMarkSubtree);
+  }
+  let tree, treeStats;
+  for (let seed = 7; seed < 200; seed++) {
+    nextId = 0;
+    const candidate = makeNode(0, mulberry32(seed));
+    const stats = countTree(candidate);
+    if (stats.leaves >= 24 && stats.total <= 160 && stats.maxDepth >= MAX_LEVEL - 1
+        && hasBrandMarkSubtree(candidate)) {
+      tree = candidate;
+      treeStats = stats;
+      break;
+    }
+  }
+  if (!tree) {
+    nextId = 0;
+    tree = makeNode(0, mulberry32(11));
+    treeStats = countTree(tree);
+  }
+
+  function countTree(node) {
+    let total = 1, leaves = 0, maxDepth = node.level;
+    if (node.children.length === 0) leaves = 1;
+    for (const c of node.children) {
+      const s = countTree(c);
+      total += s.total;
+      leaves += s.leaves;
+      maxDepth = Math.max(maxDepth, s.maxDepth);
+    }
+    return { total, leaves, maxDepth };
+  }
+
+  // ─── 2. Layout: assign x, y to each node ───────────────────────
+  // Spacing matches the static logo: every adjacent-sibling gap = 87.5,
+  // every level distance = 110. As a result, any node that has exactly 3
+  // leaf children is automatically arranged in the brand-mark composition
+  // (parent at (px, py), children at (px-87.5, py+110), (px, py+110), (px+87.5, py+110)).
+  const X_GAP = 87.5;
+  const Y_GAP = 110;
+  let nextLeafX = 0;
+
+  function assignPositions(node) {
+    if (node.children.length === 0) {
+      node.x = nextLeafX * X_GAP;
+      nextLeafX++;
+    } else {
+      node.children.forEach(assignPositions);
+      node.x = (node.children[0].x + node.children[node.children.length - 1].x) / 2;
+    }
+    node.y = node.level * Y_GAP;
+  }
+  assignPositions(tree);
+
+  // ─── 3. Find a chosen path that ENDS at a brand-mark structure ──
+  // The path's penultimate node must have exactly 3 children, all leaves;
+  // the last (chosen) node is the rightmost of those 3. Zooming in on the
+  // penultimate node + its 3 children gives us the brand mark composition.
+  function findBrandMarkChosenPath(root) {
+    // Walk the tree looking for nodes with exactly 3 leaf children.
+    const candidates = [];
+    function walk(node, path) {
+      path.push(node);
+      if (node.children.length === 3 && node.children.every(c => c.children.length === 0)) {
+        candidates.push({
+          parentPath: path.slice(),
+          rightmostLeaf: node.children[node.children.length - 1],
+        });
+      }
+      node.children.forEach(c => walk(c, path));
+      path.pop();
+    }
+    walk(root, []);
+    if (candidates.length === 0) return null;
+
+    // Prefer the deepest path (most dramatic story), tie-break by horizontal centeredness
+    candidates.sort((a, b) => {
+      if (b.parentPath.length !== a.parentPath.length) return b.parentPath.length - a.parentPath.length;
+      const treeCenterX = (xmin + xmax) / 2;
+      return Math.abs(a.parentPath[a.parentPath.length - 1].x - treeCenterX)
+           - Math.abs(b.parentPath[b.parentPath.length - 1].x - treeCenterX);
+    });
+    const c = candidates[0];
+    return [...c.parentPath, c.rightmostLeaf];
+  }
+
+  // Compute tree bounds (needed for the chosen-path centeredness tiebreak)
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  function bounds(n) {
+    xmin = Math.min(xmin, n.x); xmax = Math.max(xmax, n.x);
+    ymin = Math.min(ymin, n.y); ymax = Math.max(ymax, n.y);
+    n.children.forEach(bounds);
+  }
+  bounds(tree);
+
+  // Fallback path finder (deepest subtree) if no brand-mark candidate exists
+  function depthOf(node) {
+    if (node.children.length === 0) return 1;
+    return 1 + Math.max(...node.children.map(depthOf));
+  }
+  function findFallbackChosenPath(root) {
+    const path = [root]; let cur = root;
+    while (cur.children.length > 0) {
+      const depths = cur.children.map(depthOf);
+      const maxD = Math.max(...depths);
+      const cands = cur.children.filter((_, i) => depths[i] === maxD);
+      cur = cands[Math.floor(cands.length / 2)];
+      path.push(cur);
+    }
+    return path;
+  }
+  const chosenPath = findBrandMarkChosenPath(tree) || findFallbackChosenPath(tree);
+  chosenPath.forEach(n => n.chosen = true);
+  const chosenIds = new Set(chosenPath.map(n => n.id));
+
+  // The brand-mark parent (penultimate node in chosen path) and its children
+  const BM_PARENT = chosenPath[chosenPath.length - 2];
+  const BM_PARENT_ID = BM_PARENT ? BM_PARENT.id : -1;
+  const BM_CHILDREN_IDS = BM_PARENT ? new Set(BM_PARENT.children.map(c => c.id)) : new Set();
+  // Edges that belong to the brand-mark composition (parent → each of its 3 children)
+  const BM_EDGE_KEYS = BM_PARENT
+    ? new Set(BM_PARENT.children.map(c => `${BM_PARENT.id}-${c.id}`))
+    : new Set();
+
+  // ─── 4. Compute a viewBox for each "level of containment": ───
+  // VBs[k] = viewBox that fits all nodes from level 0 through level k, 16:9 aspect.
+  // The camera will step through these as the tree grows, reacting to each new
+  // generation rather than zooming continuously and independently.
+  const TARGET_ASPECT = 16 / 9;
+
+  function computeViewBoxThroughLevel(maxLevel) {
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    function include(n) {
+      if (n.level <= maxLevel) {
+        xmin = Math.min(xmin, n.x); xmax = Math.max(xmax, n.x);
+        ymin = Math.min(ymin, n.y); ymax = Math.max(ymax, n.y);
+      }
+      if (n.level < maxLevel) n.children.forEach(include);
+    }
+    include(tree);
+
+    // Padding grows slightly with depth so deeper levels feel airier.
+    const PAD = 80 + maxLevel * 25;
+    const cx = (xmin + xmax) / 2;
+    const cy = (ymin + ymax) / 2;
+    let w = (xmax - xmin) + 2 * PAD;
+    let h = (ymax - ymin) + 2 * PAD;
+
+    // Minimum size so the root-only view doesn't zoom to a single point
+    const MIN_W = 460;
+    const MIN_H = MIN_W / TARGET_ASPECT;
+    if (w < MIN_W) w = MIN_W;
+    if (h < MIN_H) h = MIN_H;
+
+    // Aspect-fit to 16:9
+    if (w / h > TARGET_ASPECT) h = w / TARGET_ASPECT;
+    else                       w = h * TARGET_ASPECT;
+
+    return { x: cx - w / 2, y: cy - h / 2, w, h };
+  }
+
+  const VBs = [];
+  for (let l = 0; l <= MAX_LEVEL; l++) VBs.push(computeViewBoxThroughLevel(l));
+  const FINAL_VB = VBs[MAX_LEVEL];
+
+  // ─── Brand-mark viewBox: PIXEL-PERFECT match to static logo ────
+  // The static logo uses viewBox 800×450 with root at (400, 80), crossbar at
+  // y=135, children at y=190, x ∈ {312.5, 400, 487.5}. Because the tree above
+  // already uses logo-compatible spacing (X_GAP=87.5, Y_GAP=110), the BM_PARENT
+  // and its three leaf children are naturally laid out at exactly those
+  // proportions. We just need the final viewBox to position BM_PARENT at
+  // (400, 80) and be 800×450 in size. Then the rendered finale is pixel-
+  // identical to the static logo's icon.
+  const LOGO_VB_W = 800;
+  const LOGO_VB_H = 450;
+  const LOGO_ROOT_VB_X = 400, LOGO_ROOT_VB_Y = 80;
+  const BRAND_MARK_VB = BM_PARENT
+    ? {
+        x: BM_PARENT.x - LOGO_ROOT_VB_X,
+        y: BM_PARENT.y - LOGO_ROOT_VB_Y,
+        w: LOGO_VB_W,
+        h: LOGO_VB_H,
+      }
+    : FINAL_VB;
+
+  // ─── 5. Pre-create SVG elements ────────────────────────────────
+  const allNodes = [];
+  const allEdges = [];
+  function flatten(n) {
+    allNodes.push(n);
+    n.children.forEach(c => {
+      const isChosenEdge = chosenIds.has(n.id) && chosenIds.has(c.id);
+      allEdges.push({ parent: n, child: c, chosen: isChosenEdge });
+      flatten(c);
+    });
+  }
+  flatten(tree);
+
+  // Helper: build the L-shaped path string from parent-bottom to child-top
+  function edgePath(parent, child) {
+    const x0 = parent.x, y0 = parent.y + NODE_R + HALF_STROKE;
+    const x1 = child.x,  y1 = child.y - NODE_R - HALF_STROKE;
+    const ymid = (y0 + y1) / 2;
+    if (Math.abs(x0 - x1) < 0.5) {
+      // Single straight vertical
+      return `M ${x0} ${y0} L ${x1} ${y1}`;
+    }
+    return `M ${x0} ${y0} L ${x0} ${ymid} L ${x1} ${ymid} L ${x1} ${y1}`;
+  }
+
+  // Sort: draw edges first (so they appear behind nodes), then nodes
+  // Within edges: non-chosen first, chosen on top so the green path sits above the cream.
+  allEdges.sort((a, b) => (a.chosen ? 1 : 0) - (b.chosen ? 1 : 0));
+
+  const edgeEls = [];
+  allEdges.forEach(edge => {
+    const p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', edgePath(edge.parent, edge.child));
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', CREAM);
+    p.setAttribute('stroke-width', STROKE);
+    p.setAttribute('stroke-linecap', 'square');
+    p.setAttribute('pathLength', '100');
+    p.setAttribute('stroke-dasharray', '100 100');
+    p.setAttribute('stroke-dashoffset', '100');
+    canvas.appendChild(p);
+    edgeEls.push({ el: p, edge });
+  });
+
+  // Cream trunk overlay for the brand-mark moment.
+  // The chosen edge from BM_PARENT to chosen-leaf is one continuous path; its
+  // "trunk" portion (vertical from P's bottom down to crossbar's centerline)
+  // ends up rendered green, but in the static logo this segment is CREAM.
+  // We overlay a cream line at this position; it fades in during ZOOM_IN to
+  // mask the green trunk and make the held composition match the brand mark.
+  const BM_TRUNK_Y1 = BM_PARENT ? BM_PARENT.y + NODE_R + HALF_STROKE : 0;
+  // With logo-compatible spacing (Y_GAP=110), midY = parent.y + 55, which is
+  // exactly the static logo's crossbar y (135 - 80 = 55 below the root).
+  const BM_TRUNK_Y2 = BM_PARENT ? (BM_PARENT.y + BM_PARENT.children[0].y) / 2 : 0;
+  const bmCreamTrunkEl = document.createElementNS(SVG_NS, 'line');
+  if (BM_PARENT) {
+    bmCreamTrunkEl.setAttribute('x1', BM_PARENT.x);
+    bmCreamTrunkEl.setAttribute('y1', BM_TRUNK_Y1);
+    bmCreamTrunkEl.setAttribute('x2', BM_PARENT.x);
+    bmCreamTrunkEl.setAttribute('y2', BM_TRUNK_Y2);
+    bmCreamTrunkEl.setAttribute('stroke', CREAM);
+    bmCreamTrunkEl.setAttribute('stroke-width', STROKE);
+    bmCreamTrunkEl.setAttribute('stroke-linecap', 'square');
+    bmCreamTrunkEl.setAttribute('opacity', '0');
+    canvas.appendChild(bmCreamTrunkEl);
+  }
+
+  // ─── Wordmark text — exact positions, sizes, and letter-spacings from the
+  //    static logo SVG (decision-tree-research-logo.svg). The static logo lives
+  //    in viewBox 800×450 with root at (400, 80); BRAND_MARK_VB places BM_PARENT
+  //    at (400, 80) inside an 800×450 view, so adding (BM_PARENT.x - 400, BM_PARENT.y - 80)
+  //    to the logo's text translates lands them at the right place during the held finale.
+  const FONT_FAMILY = "Futura-Medium, Futura, 'Jost', sans-serif";
+  const FONT_WEIGHT = '500';
+  let wordmarkEls = null;
+  if (BM_PARENT) {
+    const offX = BM_PARENT.x - LOGO_ROOT_VB_X;  // VB.x
+    const offY = BM_PARENT.y - LOGO_ROOT_VB_Y;  // VB.y
+
+    const dt = document.createElementNS(SVG_NS, 'text');
+    dt.setAttribute('transform', `translate(${offX + 108.37} ${offY + 308})`);
+    dt.setAttribute('font-family', FONT_FAMILY);
+    dt.setAttribute('font-size', '74');
+    dt.setAttribute('font-weight', FONT_WEIGHT);
+    dt.setAttribute('letter-spacing', '.04em');
+    dt.setAttribute('fill', CREAM);
+    dt.setAttribute('opacity', '0');
+    const dtSpan = document.createElementNS(SVG_NS, 'tspan');
+    dtSpan.setAttribute('x', '0');
+    dtSpan.setAttribute('y', '0');
+    dtSpan.textContent = 'DECISION TREE';
+    dt.appendChild(dtSpan);
+    canvas.appendChild(dt);
+
+    const rs = document.createElementNS(SVG_NS, 'text');
+    rs.setAttribute('transform', `translate(${offX + 212.95} ${offY + 369.75}) scale(1.06 1)`);
+    rs.setAttribute('font-family', FONT_FAMILY);
+    rs.setAttribute('font-size', '50');
+    rs.setAttribute('font-weight', FONT_WEIGHT);
+    rs.setAttribute('letter-spacing', '.28em');
+    rs.setAttribute('fill', GREEN);
+    rs.setAttribute('opacity', '0');
+    const rsSpan = document.createElementNS(SVG_NS, 'tspan');
+    rsSpan.setAttribute('x', '0');
+    rsSpan.setAttribute('y', '0');
+    rsSpan.textContent = 'RESEARCH';
+    rs.appendChild(rsSpan);
+    canvas.appendChild(rs);
+
+    wordmarkEls = { dt, rs };
+  }
+
+  // Then nodes (on top of edges)
+  // Sort: non-chosen first, chosen on top
+  allNodes.sort((a, b) => (a.chosen ? 1 : 0) - (b.chosen ? 1 : 0));
+  const nodeEls = [];
+  allNodes.forEach(node => {
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('cx', node.x);
+    c.setAttribute('cy', node.y);
+    c.setAttribute('r', 0);
+    c.setAttribute('fill', 'none');
+    c.setAttribute('stroke', CREAM);
+    c.setAttribute('stroke-width', STROKE);
+    canvas.appendChild(c);
+    nodeEls.push({ el: c, node });
+  });
+
+  // ─── 6. Animation timeline ─────────────────────────────────────
+  // Each level appears during a window. The viewBox steps through level-by-level
+  // until the full tree is visible. After CHOSEN sweeps green from root → leaf,
+  // ZOOM_IN tightens the camera onto the brand-mark subtree (parent + 3 children
+  // with rightmost filled), reverts the parent's stroke from green to cream so
+  // the held composition reads as the brand mark icon. Then loop.
+  const PHASE = {
+    L1:        { start:    0, end:  600 },   // root
+    L2:        { start:  600, end: 1300 },   // 3 children
+    L3:        { start: 1300, end: 2200 },   // 6 grandchildren
+    L4:        { start: 2200, end: 3300 },
+    L5:        { start: 3300, end: 4600 },
+    L6:        { start: 4600, end: 6000 },
+    HOLD:      { start: 6000, end: 6700 },
+    CHOSEN:    { start: 6700, end: 8400 },   // green sweeps root → leaf
+    ZOOM_IN:   { start: 8400, end: 10100 },  // camera tightens to brand-mark subtree
+    HOLD_BM:   { start: 10100, end: 10900 }, // hold the icon alone (0.8s)
+    WORDMARK:  { start: 10900, end: 12300 }, // DECISION TREE / RESEARCH text fades in (1.4s)
+    HOLD_FULL: { start: 12300, end: 14600 }, // hold full logo: icon + wordmark (2.3s)
+    DISSOLVE:  { start: 14600, end: 15800 },
+  };
+  const TOTAL = 15800;
+
+  // Wordmark fades in during WORDMARK phase, then sits at full opacity through
+  // HOLD_FULL. DISSOLVE is handled by master alpha multiplication at render.
+  function wordmarkAlphaT(t) {
+    const w = PHASE.WORDMARK;
+    if (t < w.start) return 0;
+    if (t < w.end) return easeInOut((t - w.start) / (w.end - w.start));
+    return 1;
+  }
+
+  function nodePhase(level) {
+    return PHASE[`L${level + 1}`];
+  }
+  // Nodes appear in the LATER portion of their phase — the camera leads them.
+  // This way the viewport is already wide enough for the children before they sprout.
+  const NODE_REVEAL_DELAY = 0.40;  // 0..1 — what fraction into the phase before nodes start appearing
+  function nodeBuildT(node, t) {
+    const ph = nodePhase(node.level);
+    const adjustedStart = ph.start + (ph.end - ph.start) * NODE_REVEAL_DELAY;
+    if (t <= adjustedStart) return 0;
+    if (t >= ph.end) return 1;
+    return easeOutQuart((t - adjustedStart) / (ph.end - adjustedStart));
+  }
+  function edgeBuildT(edge, t) {
+    // Edges appear with their child node
+    return nodeBuildT(edge.child, t);
+  }
+
+  // Sequential green traversal along the chosen path during CHOSEN phase
+  function chosenSweepProgress(t) {
+    const ph = PHASE.CHOSEN;
+    if (t <= ph.start) return 0;
+    if (t >= ph.end) return 1;
+    return easeOutCubic((t - ph.start) / (ph.end - ph.start));
+  }
+  function chosenNodeT(node, t) {
+    if (!node.chosen) return 0;
+    const idx = chosenPath.findIndex(n => n.id === node.id);
+    if (idx < 0) return 0;
+    const segments = chosenPath.length;
+    const sweep = chosenSweepProgress(t);
+    const localStart = idx / segments;
+    const localEnd = (idx + 1) / segments;
+    return clamp((sweep - localStart) / (localEnd - localStart), 0, 1);
+  }
+  function chosenEdgeT(edge, t) {
+    return chosenNodeT(edge.child, t);
+  }
+
+  // Non-chosen elements dim during CHOSEN, stay dim through ZOOM_IN/HOLD_BM
+  function nonChosenAlpha(t) {
+    const ch = PHASE.CHOSEN;
+    if (t < ch.start) return 1;
+    if (t < ch.end) return lerp(1, 0.18, easeInOut((t - ch.start) / (ch.end - ch.start)));
+    return 0.18;
+  }
+
+  // The brand-mark composition during ZOOM_IN/HOLD_BM:
+  //   - the brand-mark parent's stroke reverts green → cream (it's now the "root"
+  //     of the brand mark, which is cream in the static logo)
+  //   - the parent's two non-chosen children + their edges: restore opacity 0.18 → 1
+  //   - the chosen leaf and its edge stay green
+  //   - EVERYTHING ELSE (root, ancestors, surrounding tree) fades to 0
+  //     so the held frame reads as the brand mark icon alone
+  // Returns 0..1: 0 means no brand-mark treatment, 1 means full.
+  function brandMarkRevealT(t) {
+    const z = PHASE.ZOOM_IN;
+    if (t < z.start) return 0;
+    if (t < z.end) return easeInOut((t - z.start) / (z.end - z.start));
+    return 1;
+  }
+  function isBMNode(node) {
+    return node.id === BM_PARENT_ID || BM_CHILDREN_IDS.has(node.id);
+  }
+  function isBMSibling(node) {
+    // A child of the brand-mark parent that ISN'T the chosen leaf
+    return BM_CHILDREN_IDS.has(node.id) && !node.chosen;
+  }
+  function isBMEdge(edge) {
+    // Any of the 3 edges from the brand-mark parent to its children
+    return edge.parent.id === BM_PARENT_ID;
+  }
+  function isBMSiblingEdge(edge) {
+    return edge.parent.id === BM_PARENT_ID && !edge.chosen;
+  }
+
+  // Master alpha (dissolve at the end → 0; build-in at the start → 1)
+  function masterAlpha(t) {
+    const ds = PHASE.DISSOLVE;
+    if (t >= ds.start) {
+      return 1 - easeInOut(clamp((t - ds.start) / (ds.end - ds.start), 0, 1));
+    }
+    // Tiny fade-in at the very start to mask any stale state from the loop wrap
+    if (t < 100) return t / 100;
+    return 1;
+  }
+
+  // ViewBox steps through one VB per level reveal. The camera ZOOMS QUICKLY at
+  // the start of each phase (front-loaded easing) so the viewport is already
+  // wide enough by the time the new children sprout in (they sprout later in
+  // the phase per NODE_REVEAL_DELAY above). This avoids the awful moment where
+  // a long horizontal connector stretches off-screen toward an as-yet-unseen child.
+  const CAMERA_ZOOM_FRACTION = 0.55;  // camera zoom completes in first 55% of phase
+  function interpVB(a, b, t) {
+    return {
+      x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t),
+      w: lerp(a.w, b.w, t), h: lerp(a.h, b.h, t),
+    };
+  }
+  function getViewBox(t) {
+    // L1 phase: only the root scaling in — keep camera tight on root
+    if (t < PHASE.L1.end) return VBs[0];
+
+    // L2..L6: each phase transitions VB from previous level to current level
+    for (let k = 2; k <= 6; k++) {
+      const phase = PHASE[`L${k}`];
+      if (t >= phase.start && t < phase.end) {
+        const zoomEnd = phase.start + (phase.end - phase.start) * CAMERA_ZOOM_FRACTION;
+        const progress = clamp((t - phase.start) / (zoomEnd - phase.start), 0, 1);
+        const eased = easeOutCubic(progress);
+        return interpVB(VBs[k - 2], VBs[k - 1], eased);
+      }
+    }
+    // After build: full tree, then zoom in to brand mark, then hold (BM,
+    // WORDMARK, HOLD_FULL, DISSOLVE all sit on the brand-mark viewBox).
+    if (t < PHASE.ZOOM_IN.start) return VBs[MAX_LEVEL];
+    if (t < PHASE.ZOOM_IN.end) {
+      const z = PHASE.ZOOM_IN;
+      const eased = easeInOut(clamp((t - z.start) / (z.end - z.start), 0, 1));
+      return interpVB(VBs[MAX_LEVEL], BRAND_MARK_VB, eased);
+    }
+    return BRAND_MARK_VB;
+  }
+
+  // ─── 7. Main render loop ───────────────────────────────────────
+  let startTime = null;
+  function tick(now) {
+    if (startTime === null) startTime = now;
+    const t = (now - startTime) % TOTAL;
+
+    // ViewBox
+    const vb = getViewBox(t);
+    canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+
+    const master = masterAlpha(t);
+    const ncAlpha = nonChosenAlpha(t);
+
+    const bmReveal = brandMarkRevealT(t);
+    const wordmarkAlpha = wordmarkAlphaT(t);
+
+    // Cream trunk overlay — fades in during ZOOM_IN to mask the green chosen
+    // trunk between BM_PARENT and the crossbar. Position is static (set at
+    // element creation) because the BM subtree is laid out in logo proportions
+    // from frame 1; only opacity is animated.
+    if (BM_PARENT) {
+      bmCreamTrunkEl.setAttribute('opacity', String(master * bmReveal));
+    }
+
+    // Wordmark — fades in during WORDMARK phase, holds, fades out with master.
+    if (wordmarkEls) {
+      const a = String(master * wordmarkAlpha);
+      wordmarkEls.dt.setAttribute('opacity', a);
+      wordmarkEls.rs.setAttribute('opacity', a);
+    }
+
+    // Edges
+    edgeEls.forEach(({ el, edge }) => {
+      const buildP = edgeBuildT(edge, t);
+      el.setAttribute('stroke-dashoffset', String((1 - buildP) * 100));
+      let stroke = CREAM;
+      let opacity = master;
+      let strokeWidth = STROKE;
+      const partOfBM = isBMEdge(edge);
+
+      if (edge.chosen) {
+        const ct = chosenEdgeT(edge, t);
+        stroke = lerpColor(CREAM_RGB, GREEN_RGB, ct);
+        // Bump width during chosen sweep, ease back to base by HOLD_BM
+        // so the chosen leaf and edge land at the static logo's stroke width (5).
+        strokeWidth = STROKE + ct * 1.5 * (1 - bmReveal);
+        // If this chosen edge is NOT the BM edge (i.e., higher up, root → ... → P),
+        // fade it out during zoom-in.
+        if (!partOfBM) opacity *= (1 - bmReveal);
+      } else if (partOfBM) {
+        // Brand-mark sibling edges: dimmed during chosen sweep, restored during zoom-in.
+        opacity *= lerp(ncAlpha, 1, bmReveal);
+      } else {
+        // Everything else: dimmed during chosen, faded to 0 during zoom-in.
+        opacity *= ncAlpha * (1 - bmReveal);
+      }
+      el.setAttribute('stroke', stroke);
+      el.setAttribute('stroke-width', String(strokeWidth));
+      el.setAttribute('opacity', String(opacity));
+    });
+
+    // Nodes
+    nodeEls.forEach(({ el, node }) => {
+      const buildP = nodeBuildT(node, t);
+      el.setAttribute('r', String(NODE_R * buildP));
+
+      const partOfBM = isBMNode(node);
+
+      let stroke = CREAM, fill = 'none', opacity = master;
+      let strokeWidth = STROKE;
+
+      if (node.chosen) {
+        const ct = chosenNodeT(node, t);
+        stroke = lerpColor(CREAM_RGB, GREEN_RGB, ct);
+        if (node.id === BM_PARENT_ID) {
+          // Brand-mark parent reverts green → cream during zoom-in (it plays the
+          // role of the static logo's cream root).
+          stroke = lerpColor(GREEN_RGB, CREAM_RGB, bmReveal);
+          strokeWidth = STROKE + (1 - bmReveal) * 1.5;
+        } else if (!partOfBM) {
+          // Chosen ancestor ABOVE P: fade out during zoom-in.
+          strokeWidth = STROKE + ct * 1.5;
+          opacity *= (1 - bmReveal);
+        } else {
+          // Chosen leaf inside BM: ease bumped stroke back to base by HOLD_BM.
+          strokeWidth = STROKE + ct * 1.5 * (1 - bmReveal);
+        }
+        // Final chosen leaf fills green.
+        if (node === chosenPath[chosenPath.length - 1] && ct > 0.5) {
+          const fillT = (ct - 0.5) / 0.5;
+          fill = `rgba(103,192,112,${fillT})`;
+        }
+      } else if (partOfBM) {
+        // Brand-mark sibling nodes: dimmed during chosen, restored during zoom-in.
+        opacity *= lerp(ncAlpha, 1, bmReveal);
+      } else {
+        // Everything else: dimmed during chosen, faded to 0 during zoom-in.
+        opacity *= ncAlpha * (1 - bmReveal);
+      }
+      el.setAttribute('stroke', stroke);
+      el.setAttribute('stroke-width', String(strokeWidth));
+      el.setAttribute('fill', fill);
+      el.setAttribute('opacity', String(opacity));
+    });
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
