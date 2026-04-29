@@ -505,20 +505,20 @@
   // child reveals are gated on the parent's edge finishing first ("planting" the
   // circle) and staggered left-to-right within each level for an organic wave.
   const PHASE = {
-    L1:        { start:    0, end:  300 },   // root only — no incoming edge
-    L2:        { start:  300, end:  650 },   // level 1
-    L3:        { start:  650, end: 1100 },   // level 2
-    L4:        { start: 1100, end: 1650 },   // level 3
-    L5:        { start: 1650, end: 2300 },   // level 4 / leaves
-    HOLD:      { start: 2300, end: 2350 },   // near-zero gap before chosen sweep
-    CHOSEN:    { start: 2350, end: 3200 },   // signal wave + green sweep (850ms)
-    ZOOM_IN:   { start: 3200, end: 4050 },   // camera tightens to brand-mark (850ms)
-    HOLD_BM:   { start: 4050, end: 4450 },   // hold icon alone (400ms)
-    WORDMARK:  { start: 4450, end: 5150 },   // text fades in (700ms)
-    HOLD_FULL: { start: 5150, end: 6300 },   // full logo held (1150ms)
-    DISSOLVE:  { start: 6300, end: 6900 },   // (600ms)
+    L1:        { start:    0, end:  375 },   // root only — no incoming edge
+    L2:        { start:  375, end:  813 },   // level 1
+    L3:        { start:  813, end: 1375 },   // level 2
+    L4:        { start: 1375, end: 2063 },   // level 3
+    L5:        { start: 2063, end: 2875 },   // level 4 / leaves
+    HOLD:      { start: 2875, end: 2938 },   // near-zero gap before chosen sweep
+    CHOSEN:    { start: 2938, end: 4000 },   // signal wave + green sweep (1062ms)
+    ZOOM_IN:   { start: 4000, end: 5063 },   // camera tightens to brand-mark (1063ms)
+    HOLD_BM:   { start: 5063, end: 5563 },   // hold icon alone (500ms)
+    WORDMARK:  { start: 5563, end: 6438 },   // text fades in (875ms)
+    HOLD_FULL: { start: 6438, end: 7875 },   // full logo held (1437ms)
+    DISSOLVE:  { start: 7875, end: 8625 },   // (750ms)
   };
-  const TOTAL = 6900;
+  const TOTAL = 8625;
 
   // Wordmark fades in during WORDMARK phase, then sits at full opacity through
   // HOLD_FULL. DISSOLVE is handled by master alpha multiplication at render.
