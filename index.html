@@ -504,21 +504,25 @@
   // Camera moves continuously across the entire build via easeOutCubic; per-level
   // child reveals are gated on the parent's edge finishing first ("planting" the
   // circle) and staggered left-to-right within each level for an organic wave.
+  // Build phases are slowed +40% from the original baseline so individual
+  // plant-the-seed beats have room to breathe; CHOSEN onward stays at +25%.
+  // HOLD is extended to 700ms so the full tree gets a real "settle" beat
+  // before the signal wave fires — gives the eye time to absorb the complexity.
   const PHASE = {
-    L1:        { start:    0, end:  375 },   // root only — no incoming edge
-    L2:        { start:  375, end:  813 },   // level 1
-    L3:        { start:  813, end: 1375 },   // level 2
-    L4:        { start: 1375, end: 2063 },   // level 3
-    L5:        { start: 2063, end: 2875 },   // level 4 / leaves
-    HOLD:      { start: 2875, end: 2938 },   // near-zero gap before chosen sweep
-    CHOSEN:    { start: 2938, end: 4000 },   // signal wave + green sweep (1062ms)
-    ZOOM_IN:   { start: 4000, end: 5063 },   // camera tightens to brand-mark (1063ms)
-    HOLD_BM:   { start: 5063, end: 5563 },   // hold icon alone (500ms)
-    WORDMARK:  { start: 5563, end: 6438 },   // text fades in (875ms)
-    HOLD_FULL: { start: 6438, end: 7875 },   // full logo held (1437ms)
-    DISSOLVE:  { start: 7875, end: 8625 },   // (750ms)
+    L1:        { start:    0, end:  420 },   // 420ms
+    L2:        { start:  420, end:  910 },   // 490ms
+    L3:        { start:  910, end: 1540 },   // 630ms
+    L4:        { start: 1540, end: 2310 },   // 770ms
+    L5:        { start: 2310, end: 3220 },   // 910ms — leaves
+    HOLD:      { start: 3220, end: 3920 },   // 700ms full-tree settle beat
+    CHOSEN:    { start: 3920, end: 4980 },   // signal wave + green sweep (1060ms)
+    ZOOM_IN:   { start: 4980, end: 6040 },   // camera tightens to brand-mark (1060ms)
+    HOLD_BM:   { start: 6040, end: 6540 },   // hold icon alone (500ms)
+    WORDMARK:  { start: 6540, end: 7415 },   // text fades in (875ms)
+    HOLD_FULL: { start: 7415, end: 8850 },   // full logo held (1435ms)
+    DISSOLVE:  { start: 8850, end: 9600 },   // (750ms)
   };
-  const TOTAL = 8625;
+  const TOTAL = 9600;
 
   // Wordmark fades in during WORDMARK phase, then sits at full opacity through
   // HOLD_FULL. DISSOLVE is handled by master alpha multiplication at render.
